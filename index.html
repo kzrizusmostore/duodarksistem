@@ -60,12 +60,12 @@
 <script>
 /* ============ KONFIGURASI SPRITE ============
    Ganti user / repo / branch sesuai repository GitHub kamu.
-   Struktur: assets/characters/<id>/<id>-<frame>.png                         */
+   Struktur: <id>/<id>-<frame>.png  (folder neluy & nabsad langsung di root repo) */
 const SPRITES = {
-  user: 'USERNAME',
-  repo: 'REPOSITORY',
+  user: 'kzrizusmostore',
+  repo: 'duodarksistem',
   branch: 'main',
-  basePath: 'assets/characters',
+  basePath: '',                       // kosong = folder karakter langsung di root repo
   version: '1',                       // naikkan angka ini jika gambar diganti (cache bust)
   characters: {
     neluy:  { name: 'Neluy'  },
@@ -97,7 +97,7 @@ let loaded = false, selected = IDS[0], mode = 'menu', debug = false;
 })();
 
 const urlOf = (id, frame) =>
-  `https://raw.githubusercontent.com/${SPRITES.user}/${SPRITES.repo}/${SPRITES.branch}/${SPRITES.basePath}/${id}/${id}-${SPRITES.frames[frame]}.png?v=${SPRITES.version}`;
+  `https://raw.githubusercontent.com/${SPRITES.user}/${SPRITES.repo}/${SPRITES.branch}/${SPRITES.basePath ? SPRITES.basePath + '/' : ''}${id}/${id}-${SPRITES.frames[frame]}.png?v=${SPRITES.version}`;
 
 /* ============ PRELOAD ============ */
 // Mengukur kotak piksel opaque sekali saja saat load (bukan per frame),
