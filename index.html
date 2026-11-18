@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Neluy &amp; Nabsad Runner</title>
+<style>
+  :root{--ink:#22303a;--sky1:#c9dfe8;--sky2:#f4e5dc;--accent:#2f7d6d;--bad:#b3384c}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:#141c21;color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  body{display:grid;place-items:center;overflow:hidden;touch-action:manipulation}
+  [hidden]{display:none!important}
+  #stage{position:relative;width:min(100vw,calc(100vh * 16 / 9));aspect-ratio:16/9;container-type:size;font-size:clamp(11px,3.2cqh,19px);background:#000;user-select:none}
+  #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .panel{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.1em;padding:3cqh 4cqw;background:rgba(244,229,220,.93);text-align:center}
+  h1{margin:0;font-size:2em;line-height:1.1;font-weight:800;letter-spacing:-.01em}
+  .status{margin:0;max-width:60ch;line-height:1.4}
+  .bar{width:min(60%,420px);height:.6em;border-radius:1em;background:rgba(34,48,58,.15);overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
+  .err{max-width:min(90%,720px);max-height:26cqh;overflow:auto;margin:0;padding:.6em .9em;border-radius:.6em;background:#fff;border:2px solid var(--bad);color:var(--bad);text-align:left;font-size:.85em;line-height:1.45;list-style:none}
+  .err li{word-break:break-all}
+  .cards{display:flex;gap:3cqw;justify-content:center}
+  .card{appearance:none;border:3px solid transparent;border-radius:1.2em;background:rgba(255,255,255,.7);padding:.6em 1em .8em;cursor:pointer;font:inherit;font-weight:700;color:inherit;display:flex;flex-direction:column;align-items:center;gap:.4em}
+  .card img{height:38cqh;width:auto;max-width:28cqw;object-fit:contain;display:block}
+  .card[aria-pressed="true"]{border-color:var(--accent);background:#fff}
+  .card:focus-visible,.btn:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+  .row{display:flex;gap:1em;flex-wrap:wrap;justify-content:center}
+  .btn{appearance:none;border:0;border-radius:2em;padding:.7em 2.2em;font:inherit;font-weight:800;background:var(--accent);color:#fff;cursor:pointer}
+  .btn.alt{background:#fff;color:var(--ink);border:2px solid var(--ink)}
+  .btn:disabled{background:#9aa7ac;cursor:not-allowed}
+  #pOver{background:rgba(20,28,33,.72);color:#fff}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv" aria-label="Area permainan"></canvas>
+
+  <div class="panel" id="pMenu">
+    <h1>Neluy &amp; Nabsad</h1>
+    <p class="status" id="status">Memuat gambar…</p>
+    <div class="bar" id="bar"><i id="barFill"></i></div>
+    <ul class="err" id="errList" hidden></ul>
+    <div class="cards" id="cards" hidden></div>
+    <div class="row">
+      <button class="btn alt" id="btnRetry" hidden>Coba lagi</button>
+      <button class="btn" id="btnPlay" disabled>Main</button>
+    </div>
+  </div>
+
+  <div class="panel" id="pOver" hidden>
+    <h1>Kena rintangan</h1>
+    <p class="status" id="overText"></p>
+    <div class="row">
+      <button class="btn" id="btnAgain">Main lagi</button>
+      <button class="btn alt" id="btnMenu">Ganti karakter</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============ KONFIGURASI SPRITE ============
+   Ganti user / repo / branch sesuai repository GitHub kamu.
+   Struktur: assets/characters/<id>/<id>-<frame>.png                         */
+const SPRITES = {
+  user: 'USERNAME',
+  repo: 'REPOSITORY',
+  branch: 'main',
+  basePath: 'assets/characters',
+  version: '1',                       // naikkan angka ini jika gambar diganti (cache bust)
+  characters: {
+    neluy:  { name: 'Neluy'  },
+    nabsad: { name: 'Nabsad' }
+  },
+  frames: {                           // nama frame -> akhiran nama file
+    run1: 'run-1', run2: 'run-2',
+    jump1: 'jump-1', jump2: 'jump-2', jump3: 'jump-3',
+    idleSide: 'idle-side', idleFront: 'idle-front'
+  },
+  standHeight: 190,                   // tinggi karakter berdiri di game (px logis)
+  adjust: {}                          // koreksi opsional, mis. { neluy: { run1: { scale: 1.05, dx: 0, dy: 0 } } }
+};
+
+/* ============ SETUP ============ */
+const W = 960, H = 540, GROUND = 436, PX = 210;
+const $ = s => document.querySelector(s);
+const cv = $('#cv'), ctx = cv.getContext('2d');
+const IDS = Object.keys(SPRITES.characters);
+const store = {};   // store[id][frame] = { img, box, url }
+const scaleOf = {};
+let loaded = false, selected = IDS[0], mode = 'menu', debug = false;
+
+(function fit(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingQuality = 'high';
+})();
+
+const urlOf = (id, frame) =>
+  `https://raw.githubusercontent.com/${SPRITES.user}/${SPRITES.repo}/${SPRITES.branch}/${SPRITES.basePath}/${id}/${id}-${SPRITES.frames[frame]}.png?v=${SPRITES.version}`;
+
+/* ============ PRELOAD ============ */
+// Mengukur kotak piksel opaque sekali saja saat load (bukan per frame),
+// supaya anchor kaki dan skala seragam di semua sprite.
+function measure(img){
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(img, 0, 0);
+  const d = x.getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++){
+    const r = y * w * 4;
+    for (let xx = 0; xx < w; xx++){
+      const i = r + xx * 4;
+      if (d[i+3] < 24) continue;
+      if (d[i] >= 252 && d[i+1] >= 252 && d[i+2] >= 252) continue;
+      if (xx < x0) x0 = xx; if (xx > x1) x1 = xx;
+      if (y < y0) y0 = y; y1 = y;
+    }
+  }
+  if (x1 < 0) throw new Error('gambar kosong atau transparan penuh');
+  return { sx: x0, sy: y0, sw: x1 - x0 + 1, sh: y1 - y0 + 1 };
+}
+
+async function loadOne(id, frame){
+  const url = urlOf(id, frame);
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.decoding = 'async';
+  img.src = url;
+  if (typeof img.decode === 'function') await img.decode();
+  else await new Promise((ok, no) => { img.onload = ok; img.onerror = () => no(new Error('onerror')); });
+  const box = measure(img);
+  (store[id] = store[id] || {})[frame] = { img, box, url };
+}
+
+async function loadAll(){
+  const status = $('#status'), fill = $('#barFill'), errList = $('#errList');
+  loaded = false;
+  $('#btnPlay').disabled = true; $('#btnRetry').hidden = true;
+  $('#cards').hidden = true; errList.hidden = true; errList.textContent = '';
+  $('#bar').hidden = false;
+  for (const k in store) delete store[k];
+
+  if (SPRITES.user === 'USERNAME' || SPRITES.repo === 'REPOSITORY'){
+    showErrors(['Isi SPRITES.user dan SPRITES.repo di bagian atas JavaScript dengan akun dan repository GitHub kamu.']);
+    return;
+  }
+
+  const frames = Object.keys(SPRITES.frames);
+  const total = IDS.length * frames.length;
+  let done = 0, errors = [];
+  status.textContent = `Memuat gambar 0/${total}…`;
+  fill.style.width = '0%';
+
+  const jobs = [];
+  for (const id of IDS) for (const f of frames){
+    jobs.push(
+      loadOne(id, f).catch(e => {
+        errors.push(`${urlOf(id, f)}\n→ ${e && e.message && e.message !== 'onerror' ? e.message : 'gagal dimuat (cek nama file, branch, repo publik, atau koneksi)'}`);
+      }).finally(() => {
+        done++; fill.style.width = (done / total * 100) + '%';
+        status.textContent = `Memuat gambar ${done}/${total}…`;
+      })
+    );
+  }
+  await Promise.all(jobs);
+
+  if (errors.length){ showErrors(errors, total); return; }
+
+  for (const id of IDS){
+    const ref = store[id].idleSide.box.sh;
+    scaleOf[id] = SPRITES.standHeight / ref;
+  }
+  loaded = true;
+  $('#bar').hidden = true;
+  status.textContent = 'Pilih karakter, lalu tekan Main.';
+  buildCards();
+  $('#btnPlay').disabled = false;
+}
+
+function showErrors(list, total){
+  $('#bar').hidden = true;
+  $('#status').textContent = total
+    ? `${list.length} dari ${total} gambar gagal dimuat. Game tidak bisa dimulai.`
+    : 'Konfigurasi sprite belum lengkap.';
+  const ul = $('#errList');
+  ul.hidden = false;
+  for (const t of list){ const li = document.createElement('li'); li.textContent = t; ul.appendChild(li); }
+  $('#btnRetry').hidden = false;
+}
+
+function buildCards(){
+  const box = $('#cards'); box.textContent = ''; box.hidden = false;
+  for (const id of IDS){
+    const b = document.createElement('button');
+    b.className = 'card'; b.type = 'button';
+    b.setAttribute('aria-pressed', id === selected);
+    const im = document.createElement('img');
+    im.src = store[id].idleFront.url; im.alt = SPRITES.characters[id].name; im.draggable = false;
+    const nm = document.createElement('span'); nm.textContent = SPRITES.characters[id].name;
+    b.append(im, nm);
+    b.onclick = () => {
+      selected = id;
+      box.querySelectorAll('.card').forEach(c => c.setAttribute('aria-pressed', c === b));
+    };
+    box.appendChild(b);
+  }
+}
+
+/* ============ GAME ============ */
+const G = { y: 0, vy: 0, st: 'idle', t: 0, runT: 0, score: 0, best: 0, speed: 0, obs: [], nextGap: 0, dist: 0, bgX: 0 };
+try { G.best = +localStorage.getItem('nn-best') || 0; } catch (e) {}
+
+const JUMP_V = 900, GRAV = 2600, PREP = 0.09, LAND = 0.11;
+
+function reset(){
+  Object.assign(G, { y: 0, vy: 0, st: 'idle', t: 0, runT: 0, score: 0, speed: 380, obs: [], nextGap: 700, dist: 0 });
+}
+
+function startMode(){          // dipanggil setelah tombol Main
+  reset(); mode = 'ready';
+  $('#pMenu').hidden = true; $('#pOver').hidden = true;
+}
+
+function press(){
+  if (mode === 'ready'){ mode = 'play'; G.st = 'run'; }
+  if (mode !== 'play') return;
+  if (G.st === 'run' || G.st === 'land'){ G.st = 'prep'; G.t = PREP; }
+}
+
+function update(dt){
+  if (mode !== 'play') return;
+  G.speed = Math.min(380 + G.score * 0.9, 780);
+  G.dist += G.speed * dt; G.score += dt * 10; G.bgX += G.speed * dt;
+
+  if (G.st === 'run'){ G.runT += dt * (G.speed / 380); }
+  else if (G.st === 'prep'){ G.t -= dt; if (G.t <= 0){ G.st = 'air'; G.vy = JUMP_V; } }
+  else if (G.st === 'air'){
+    G.vy -= GRAV * dt; G.y += G.vy * dt;
+    if (G.y <= 0){ G.y = 0; G.vy = 0; G.st = 'land'; G.t = LAND; }
+  } else if (G.st === 'land'){ G.t -= dt; if (G.t <= 0) G.st = 'run'; }
+
+  // rintangan
+  for (const o of G.obs) o.x -= G.speed * dt;
+  G.obs = G.obs.filter(o => o.x + o.w > -20);
+  const last = G.obs[G.obs.length - 1];
+  if (!last || last.x < W - G.nextGap){
+    const dbl = Math.random() < 0.35;
+    G.obs.push({ x: W + 40, w: dbl ? 84 : 46, h: dbl ? 50 : 40 + Math.random() * 28, dbl });
+    G.nextGap = G.speed * 1.05 + 90 + Math.random() * 260;
+  }
+
+  // tabrakan (hitbox tetap, tidak bergantung ukuran gambar)
+  const px0 = PX - 24, px1 = PX + 24, pTop = GROUND - G.y - 150, pBot = GROUND - G.y - 6;
+  for (const o of G.obs){
+    if (px1 - 4 > o.x + 4 && px0 + 4 < o.x + o.w - 4 && pBot > GROUND - o.h + 6 && pTop < GROUND){ return gameOver(); }
+  }
+}
+
+function gameOver(){
+  mode = 'over'; G.st = 'idle';
+  const s = Math.floor(G.score);
+  if (s > G.best){ G.best = s; try { localStorage.setItem('nn-best', s); } catch (e) {} }
+  $('#overText').textContent = `Skor ${s}  ·  Terbaik ${G.best}`;
+  $('#pOver').hidden = false;
+}
+
+/* ============ RENDER ============ */
+function frameName(){
+  if (mode !== 'play') return 'idleSide';
+  if (G.st === 'prep') return 'jump1';
+  if (G.st === 'air') return 'jump2';
+  if (G.st === 'land') return 'jump3';
+  return (Math.floor(G.runT / 0.13) % 2) ? 'run2' : 'run1';
+}
+
+function drawSprite(id, frame, cx, footY){
+  const s = store[id] && store[id][frame];
+  if (!s){ return false; }
+  const a = (SPRITES.adjust[id] || {})[frame] || {};
+  const k = scaleOf[id] * (a.scale || 1);
+  const dw = s.box.sw * k, dh = s.box.sh * k;
+  ctx.drawImage(s.img, s.box.sx, s.box.sy, s.box.sw, s.box.sh,
+    cx - dw / 2 + (a.dx || 0), footY - dh + (a.dy || 0), dw, dh);
+  return true;
+}
+
+function drawBg(){
+  const g = ctx.createLinearGradient(0, 0, 0, GROUND);
+  g.addColorStop(0, '#c9dfe8'); g.addColorStop(1, '#f4e5dc');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // bukit paralaks
+  ctx.fillStyle = '#b7cfd0';
+  for (let i = -1; i < 4; i++){
+    const x = ((i * 380 - G.bgX * 0.15) % 1520 + 1520) % 1520 - 380;
+    ctx.beginPath(); ctx.ellipse(x + 190, GROUND, 230, 120, 0, Math.PI, 0); ctx.fill();
+  }
+  ctx.fillStyle = '#9fbcbb';
+  for (let i = -1; i < 5; i++){
+    const x = ((i * 300 - G.bgX * 0.3) % 1500 + 1500) % 1500 - 300;
+    ctx.beginPath(); ctx.ellipse(x + 150, GROUND, 170, 70, 0, Math.PI, 0); ctx.fill();
+  }
+  ctx.fillStyle = '#2d3a3f'; ctx.fillRect(0, GROUND, W, H - GROUND);
+  ctx.fillStyle = '#3f5258';
+  for (let x = -((G.bgX) % 80); x < W; x += 80) ctx.fillRect(x, GROUND + 14, 40, 5);
+}
+
+function drawObstacles(){
+  for (const o of G.obs){
+    ctx.fillStyle = '#b3384c';
+    if (o.dbl){
+      ctx.fillRect(o.x, GROUND - o.h, o.w / 2 - 2, o.h);
+      ctx.fillRect(o.x + o.w / 2 + 2, GROUND - o.h, o.w / 2 - 2, o.h);
+    } else ctx.fillRect(o.x, GROUND - o.h, o.w, o.h);
+    ctx.fillStyle = 'rgba(255,255,255,.28)';
+    ctx.fillRect(o.x, GROUND - o.h, o.w, 5);
+  }
+}
+
+function render(){
+  drawBg();
+  if (mode === 'menu') return;
+  drawObstacles();
+
+  const ok = loaded && drawSprite(selected, frameName(), PX, GROUND - G.y);
+  if (!ok){
+    ctx.fillStyle = '#b3384c'; ctx.font = '700 20px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('Sprite belum termuat — game dihentikan', W / 2, GROUND - 90);
+    mode = 'menu'; $('#pMenu').hidden = false; loadAll();
+    return;
+  }
+  // bayangan kaki
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  const sh = Math.max(0.35, 1 - G.y / 260);
+  ctx.beginPath(); ctx.ellipse(PX, GROUND + 4, 44 * sh, 7 * sh, 0, 0, Math.PI * 2); ctx.fill();
+
+  if (debug){
+    ctx.strokeStyle = '#00f'; ctx.strokeRect(PX - 24, GROUND - G.y - 150, 48, 144);
+    ctx.strokeStyle = '#f0f'; ctx.beginPath(); ctx.moveTo(0, GROUND); ctx.lineTo(W, GROUND); ctx.stroke();
+  }
+
+  ctx.fillStyle = '#22303a'; ctx.font = '800 24px system-ui'; ctx.textAlign = 'right';
+  ctx.fillText(Math.floor(G.score), W - 24, 40);
+  ctx.font = '600 14px system-ui'; ctx.fillText('Terbaik ' + G.best, W - 24, 62);
+  if (mode === 'ready'){
+    ctx.textAlign = 'center'; ctx.font = '700 22px system-ui';
+    ctx.fillText('Ketuk layar atau tekan Spasi untuk mulai', W / 2, 120);
+  }
+}
+
+let last = 0;
+function loop(t){
+  const dt = Math.min((t - last) / 1000 || 0, 0.05); last = t;
+  update(dt); render();
+  requestAnimationFrame(loop);
+}
+
+/* ============ INPUT & TOMBOL ============ */
+cv.addEventListener('pointerdown', e => { e.preventDefault(); press(); });
+addEventListener('keydown', e => {
+  if (e.code === 'KeyD'){ debug = !debug; return; }
+  if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)){
+    if (mode === 'ready' || mode === 'play'){ e.preventDefault(); if (!e.repeat) press(); }
+  }
+});
+$('#btnPlay').onclick = () => { if (loaded) startMode(); };
+$('#btnRetry').onclick = loadAll;
+$('#btnAgain').onclick = startMode;
+$('#btnMenu').onclick = () => { mode = 'menu'; $('#pOver').hidden = true; $('#pMenu').hidden = false; };
+
+reset();
+requestAnimationFrame(loop);
+loadAll();
+</script>
+</body>
+</html>
