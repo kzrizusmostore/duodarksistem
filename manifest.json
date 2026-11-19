@@ -1,0 +1,22 @@
+{
+ "name": "Neluy & Biluy Runner",
+ "short_name": "Neluy Runner",
+ "start_url": ".",
+ "display": "fullscreen",
+ "orientation": "landscape",
+ "background_color": "#1b2030",
+ "theme_color": "#1b2030",
+ "icons": [
+  {
+   "src": "icon-192.png",
+   "sizes": "192x192",
+   "type": "image/png"
+  },
+  {
+   "src": "icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "any maskable"
+  }
+ ]
+}
